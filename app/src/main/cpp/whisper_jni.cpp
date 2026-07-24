@@ -2,12 +2,70 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <fstream>
+#include <cstdint>
 #include <android/log.h>
 #include "whisper.h"
 
 #define TAG "whisper-jni"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+// --- Simple WAV reader (16-bit PCM only) ---
+static bool read_wav_f32(const std::string& path, std::vector<float>& samples) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        LOGE("Cannot open file: %s", path.c_str());
+        return false;
+    }
+
+    // Read WAV header (44 bytes standard)
+    char header[44];
+    file.read(header, 44);
+    if (!file || file.gcount() < 44) {
+        LOGE("Failed to read WAV header");
+        return false;
+    }
+
+    // Verify RIFF/WAVE
+    if (std::string(header, 4) != "RIFF" || std::string(header + 8, 4) != "WAVE") {
+        LOGE("Not a valid WAV file");
+        return false;
+    }
+
+    int16_t bitsPerSample = *(int16_t*)(header + 34);
+    if (bitsPerSample != 16) {
+        LOGE("Only 16-bit WAV supported, got %d bits", bitsPerSample);
+        return false;
+    }
+
+    // Find data chunk
+    file.seekg(36);
+    while (file) {
+        char chunkId[4];
+        int32_t chunkSize;
+        file.read(chunkId, 4);
+        file.read((char*)&chunkSize, 4);
+        if (!file) break;
+
+        if (std::string(chunkId, 4) == "data") {
+            int nSamples = chunkSize / 2;
+            std::vector<int16_t> raw(nSamples);
+            file.read((char*)raw.data(), chunkSize);
+
+            samples.resize(nSamples);
+            for (int i = 0; i < nSamples; i++) {
+                samples[i] = raw[i] / 32768.0f;
+            }
+            LOGI("WAV loaded: %d samples", nSamples);
+            return true;
+        }
+        file.seekg(chunkSize, std::ios::cur);
+    }
+
+    LOGE("No data chunk found in WAV");
+    return false;
+}
 
 extern "C" {
 
@@ -58,6 +116,15 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     const char* audio = env->GetStringUTFChars(audioPath, nullptr);
     const char* lang = env->GetStringUTFChars(language, nullptr);
     
+    // Read audio file into PCM float samples
+    std::vector<float> pcmf32;
+    if (!read_wav_f32(audio, pcmf32)) {
+        env->ReleaseStringUTFChars(audioPath, audio);
+        env->ReleaseStringUTFChars(language, lang);
+        LOGE("Failed to read audio file");
+        return env->NewStringUTF("[]");
+    }
+    
     // Full params
     struct whisper_full_params params = whisper_full_default_params(
         WHISPER_SAMPLING_GREEDY);
@@ -73,9 +140,10 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     params.max_len = 0;
     params.language = (lang[0] == 'a' && lang[1] == 'u') ? nullptr : lang;
     
-    LOGI("Starting transcription: audio=%s, lang=%s, threads=%d", audio, lang, nThreads);
+    LOGI("Starting transcription: audio=%s, lang=%s, threads=%d, samples=%zu",
+         audio, lang, nThreads, pcmf32.size());
     
-    int ret = whisper_full(ctx, params, audio);
+    int ret = whisper_full(ctx, params, pcmf32.data(), pcmf32.size());
     
     env->ReleaseStringUTFChars(audioPath, audio);
     env->ReleaseStringUTFChars(language, lang);
@@ -97,13 +165,10 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     for (int i = 0; i < n_segments; i++) {
         if (i > 0) json << ",";
         auto seg = whisper_full_get_segment_text(ctx, i);
-        // Note: whisper_segment doesn't have direct t0/t1 fields.
-        // We use whisper_full_get_segment_t0/t1
         int64_t start = whisper_full_get_segment_t0(ctx, i);
         int64_t end = whisper_full_get_segment_t1(ctx, i);
         
         std::string text(seg);
-        // Build properly escaped JSON segment
         json << "["
              << (start - t0) * 10 << ","
              << (end - t0) * 10 << ","

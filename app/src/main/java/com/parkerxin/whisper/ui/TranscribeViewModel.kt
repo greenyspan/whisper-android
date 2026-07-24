@@ -113,7 +113,7 @@ class TranscribeViewModel : ViewModel() {
                     statusMessage = "正在转写…",
                 )
 
-                val audioPath = copyAudioToCache(state.selectedFile!!)
+                val audioPath = prepareAudio(state.selectedFile!!)
 
                 val result = withContext(Dispatchers.IO) {
                     WhisperBridge.transcribe(
@@ -146,8 +146,13 @@ class TranscribeViewModel : ViewModel() {
         _uiState.value = AppUiState()
     }
 
-    private suspend fun copyAudioToCache(uri: Uri): String = withContext(Dispatchers.IO) {
+    private suspend fun prepareAudio(uri: Uri): String = withContext(Dispatchers.IO) {
         val context = com.parkerxin.whisper.WhisperApp.instance
+        // Try to decode to WAV (handles MP3, M4A, MP4, etc.)
+        val wavPath = com.parkerxin.whisper.data.AudioDecoder.decodeToWav(context, uri)
+        if (wavPath != null) return@withContext wavPath
+
+        // Fallback: copy as-is (for WAV files that don't need decoding)
         val cacheFile = java.io.File(context.cacheDir, "input_audio")
         context.contentResolver.openInputStream(uri)?.use { input ->
             cacheFile.outputStream().use { output ->
