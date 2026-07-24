@@ -9,27 +9,6 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-// --- Helper to build JSON result string ---
-static std::string segment_to_json(const whisper_segment& seg, int64_t t0) {
-    std::ostringstream oss;
-    oss << "["
-        << (seg.t0 - t0) * 10 << ","
-        << (seg.t1 - t0) * 10 << ","
-        << "\"";
-    // Escape JSON string
-    for (char c : seg.text) {
-        switch (c) {
-            case '"':  oss << "\\\""; break;
-            case '\\': oss << "\\\\"; break;
-            case '\n': oss << "\\n";  break;
-            case '\t': oss << "\\t";  break;
-            default:   oss << c;
-        }
-    }
-    oss << "\"]";
-    return oss.str();
-}
-
 extern "C" {
 
 JNIEXPORT jlong JNICALL
