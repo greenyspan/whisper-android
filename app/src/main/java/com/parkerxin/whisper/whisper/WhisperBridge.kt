@@ -95,13 +95,13 @@ object WhisperBridge {
             if (json[i] == '[') {
                 i++
                 // Parse startMs
-                val startMs = parseLong(json, i).also { i = it.second }
+                val (startMs, ni1) = parseLong(json, i); i = ni1
                 i = skipComma(json, i)
                 // Parse endMs
-                val endMs = parseLong(json, i).also { i = it.second }
+                val (endMs, ni2) = parseLong(json, i); i = ni2
                 i = skipComma(json, i)
                 // Parse string
-                val text = parseString(json, i).also { i = it.second }
+                val (text, ni3) = parseString(json, i); i = ni3
                 i = skipToNext(json, i)
 
                 if (text.isNotBlank()) {
