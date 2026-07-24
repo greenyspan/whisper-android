@@ -20,19 +20,16 @@ object AudioDecoder {
         if (wavFile.exists()) wavFile.delete()
 
         return try {
+            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                ?: return null
             val extractor = MediaExtractor()
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                extractor.setDataSource(input.fd)
-            } ?: run {
-                extractor.release()
-                return null
-            }
+            extractor.setDataSource(pfd.fileDescriptor)
 
             // Find the first audio track
             var trackIndex = -1
             var format: MediaFormat? = null
             for (i in 0 until extractor.trackCount) {
-                val f = extractor.trackFormat(i)
+                val f = extractor.getTrackFormat(i)
                 if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
                     trackIndex = i
                     format = f
