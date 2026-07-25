@@ -326,6 +326,9 @@ private fun ProgressCard(uiState: AppUiState) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+                AppState.DECODING -> {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
                 AppState.TRANSCRIBING -> {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth(),
