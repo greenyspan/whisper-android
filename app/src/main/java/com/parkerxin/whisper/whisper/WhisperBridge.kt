@@ -64,13 +64,15 @@ object WhisperBridge {
     fun transcribe(
         audioPath: String,
         language: String = "auto",
-        nThreads: Int = Runtime.getRuntime().availableProcessors(),
+        nThreads: Int = minOf(Runtime.getRuntime().availableProcessors(), 3),
     ): TranscribeResult {
         if (!isLoaded) {
             throw IllegalStateException("模型未加载")
         }
 
+        android.util.Log.i("WhisperBridge", "开始转写: path=$audioPath, lang=$language, threads=$nThreads")
         val json = nativeTranscribe(ctxPtr, audioPath, language, nThreads)
+        android.util.Log.i("WhisperBridge", "转写完成, JSON 长度: ${json.length}")
         return parseJsonResult(json)
     }
 
