@@ -123,11 +123,7 @@ fun HomeScreen(
 
             // 7. Result
             AnimatedVisibility(visible = uiState.state == AppState.DONE) {
-                ResultCard(
-                    result = uiState.result,
-                    outputPath = uiState.outputPath,
-                    onNewTask = { viewModel.reset() },
-                )
+                ResultCard(uiState = uiState, onNewTask = { viewModel.reset() })
             }
         }
     }
@@ -300,7 +296,7 @@ private fun ProgressCard(uiState: AppUiState) {
                 }
                 AppState.TRANSCRIBING -> {
                     LinearProgressIndicator(progress = { uiState.progress }, modifier = Modifier.fillMaxWidth())
-                    Text("${(uiState.progress).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                    Text("${(uiState.progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
                 }
                 else -> {}
             }
@@ -328,10 +324,14 @@ private fun ErrorCard(message: String, onRetry: () -> Unit) {
 
 @Composable
 private fun ResultCard(
-    result: com.parkerxin.whisper.whisper.TranscribeResult?,
-    outputPath: String?,
+    uiState: AppUiState,
     onNewTask: () -> Unit,
 ) {
+    val result = uiState.result
+    val elapsedSec = if (uiState.transcribeEndMs > 0) (uiState.transcribeEndMs - uiState.transcribeStartMs) / 1000f else 0f
+    val audioSec = uiState.audioDurationSec
+    val speedRatio = if (audioSec > 0 && elapsedSec > 0) elapsedSec / audioSec else 0f
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
@@ -344,12 +344,21 @@ private fun ResultCard(
             }
             if (result != null) {
                 Text("共 ${result.segments.size} 个片段", style = MaterialTheme.typography.bodySmall)
+
+                // Timing info
+                if (elapsedSec > 0) {
+                    Text(
+                        "耗时: ${fmtDuration(elapsedSec)}  |  音频: ${fmtDuration(audioSec)}  |  倍率: ${String.format("%.1f", speedRatio)}x",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     result.fullText.take(300).let { if (result.fullText.length > 300) "$it…" else it },
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 )
-                outputPath?.let {
+                uiState.outputPath?.let {
                     Text("保存位置: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -358,4 +367,10 @@ private fun ResultCard(
             }
         }
     }
+}
+
+private fun fmtDuration(totalSec: Float): String {
+    val m = (totalSec / 60).toInt()
+    val s = (totalSec % 60).toInt()
+    return if (m > 0) "${m}分${s}秒" else "${s}秒"
 }

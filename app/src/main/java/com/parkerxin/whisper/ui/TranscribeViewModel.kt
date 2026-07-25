@@ -48,6 +48,10 @@ data class AppUiState(
     val result: TranscribeResult? = null,
     val outputPath: String? = null,
     val errorMessage: String? = null,
+    // Timing stats
+    val transcribeStartMs: Long = 0,
+    val transcribeEndMs: Long = 0,
+    val audioDurationSec: Float = 0f,
 )
 
 class TranscribeViewModel : ViewModel() {
@@ -123,10 +127,12 @@ class TranscribeViewModel : ViewModel() {
                 }
 
                 // Step 4: Transcribe with progress
+                val tStart = System.currentTimeMillis()
                 _uiState.value = _uiState.value.copy(
                     state = AppState.TRANSCRIBING,
                     statusMessage = "正在转写…",
                     progress = 0f,
+                    transcribeStartMs = tStart,
                 )
 
                 // Connect progress callback
@@ -153,6 +159,9 @@ class TranscribeViewModel : ViewModel() {
                 }
 
                 // Step 5: Save output
+                val tEnd = System.currentTimeMillis()
+                val audioSec = result.segments.lastOrNull()?.endMs?.div(1000f) ?: 0f
+
                 _uiState.value = _uiState.value.copy(
                     statusMessage = "正在保存…",
                 )
@@ -164,6 +173,8 @@ class TranscribeViewModel : ViewModel() {
                     progress = 1f,
                     result = result,
                     outputPath = state.outputFileName,
+                    transcribeEndMs = tEnd,
+                    audioDurationSec = audioSec,
                 )
 
             } catch (e: Exception) {
