@@ -159,15 +159,21 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     params.max_len = 0;
     params.language = (lang[0] == 'a' && lang[1] == 'u') ? nullptr : lang;
     
-    // Progress callback - calls back to Kotlin
+    // Progress callback — uses GetEnv for thread-safety
     params.progress_callback = [](struct whisper_context*, struct whisper_state*, int progress, void*) {
-        if (g_jvm && g_bridge && g_onProgress) {
-            JNIEnv* cbEnv;
-            if (g_jvm->AttachCurrentThread(&cbEnv, nullptr) == JNI_OK) {
-                cbEnv->CallVoidMethod(g_bridge, g_onProgress, progress);
-                g_jvm->DetachCurrentThread();
-            }
+        if (!g_jvm) return;
+        JNIEnv* cbEnv = nullptr;
+        bool needDetach = false;
+        jint ret = g_jvm->GetEnv((void**)&cbEnv, JNI_VERSION_1_6);
+        if (ret == JNI_EDETACHED) {
+            if (g_jvm->AttachCurrentThread(&cbEnv, nullptr) != JNI_OK) return;
+            needDetach = true;
         }
+        if (cbEnv && g_bridge && g_onProgress) {
+            cbEnv->CallVoidMethod(g_bridge, g_onProgress, progress);
+            if (cbEnv->ExceptionCheck()) cbEnv->ExceptionClear();
+        }
+        if (needDetach) g_jvm->DetachCurrentThread();
     };
     params.progress_callback_user_data = nullptr;
     
@@ -176,13 +182,10 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     
     int ret = whisper_full(ctx, params, pcmf32.data(), pcmf32.size());
     
-    // Signal 100% on completion
-    if (g_jvm && g_bridge && g_onProgress) {
-        JNIEnv* cbEnv;
-        if (g_jvm->AttachCurrentThread(&cbEnv, nullptr) == JNI_OK) {
-            cbEnv->CallVoidMethod(g_bridge, g_onProgress, 100);
-            g_jvm->DetachCurrentThread();
-        }
+    // Signal 100% on completion (safe, same thread as caller)
+    if (env && g_bridge && g_onProgress) {
+        env->CallVoidMethod(g_bridge, g_onProgress, 100);
+        if (env->ExceptionCheck()) env->ExceptionClear();
     }
     
     env->ReleaseStringUTFChars(audioPath, audio);

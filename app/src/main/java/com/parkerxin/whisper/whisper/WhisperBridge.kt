@@ -42,8 +42,7 @@ object WhisperBridge {
 
     // --- Called from JNI (progress callback) ---
     @Keep
-    @Suppress("unused")
-    private fun onProgress(progress: Int) {
+    fun onProgress(progress: Int) {
         progressListener?.invoke(progress)
     }
 
