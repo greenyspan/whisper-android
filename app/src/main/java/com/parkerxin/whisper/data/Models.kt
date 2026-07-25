@@ -50,7 +50,12 @@ object Models {
     )
 
     private fun modelsDir(): File {
-        val dir = File(WhisperApp.instance.filesDir, "models")
+        // Save to public Downloads to survive app reinstalls
+        val dir = File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS
+            ), "WhisperModels"
+        )
         dir.mkdirs()
         return dir
     }

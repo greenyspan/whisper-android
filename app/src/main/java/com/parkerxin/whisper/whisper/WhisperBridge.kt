@@ -1,5 +1,7 @@
 package com.parkerxin.whisper.whisper
 
+import androidx.annotation.Keep
+
 data class Segment(
     val startMs: Long,
     val endMs: Long,
@@ -16,6 +18,9 @@ object WhisperBridge {
     private var ctxPtr: Long = 0
     private var isLoaded = false
 
+    /** Set by ViewModel; called from JNI thread when progress updates (0-100) */
+    var progressListener: ((Int) -> Unit)? = null
+
     init {
         try {
             System.loadLibrary("whisper-jni")
@@ -26,24 +31,21 @@ object WhisperBridge {
 
     // --- Native methods ---
 
-    /** Initialize whisper context from a model file. Returns context pointer. */
-    private external fun nativeInit(modelPath: String): Long
-
-    /** Free whisper context. */
+    private external fun nativeInit(modelPath: String, bridgeObj: WhisperBridge): Long
     private external fun nativeFree(ctx: Long)
-
-    /**
-     * Run transcription.
-     * Returns an array of long values:
-     *   count, then for each segment: startMs, endMs, textLen, (chars as shorts)...
-     * To keep it simple we return JSON string instead.
-     */
     private external fun nativeTranscribe(
         ctx: Long,
         audioPath: String,
         language: String,
         nThreads: Int,
     ): String
+
+    // --- Called from JNI (progress callback) ---
+    @Keep
+    @Suppress("unused")
+    private fun onProgress(progress: Int) {
+        progressListener?.invoke(progress)
+    }
 
     // --- Public API ---
 
@@ -52,7 +54,7 @@ object WhisperBridge {
             nativeFree(ctxPtr)
             isLoaded = false
         }
-        ctxPtr = nativeInit(modelPath)
+        ctxPtr = nativeInit(modelPath, this)
         if (ctxPtr == 0L) {
             throw RuntimeException("无法加载模型: $modelPath")
         }
@@ -77,6 +79,7 @@ object WhisperBridge {
     }
 
     fun release() {
+        progressListener = null
         if (isLoaded) {
             nativeFree(ctxPtr)
             ctxPtr = 0
@@ -84,25 +87,20 @@ object WhisperBridge {
         }
     }
 
-    // --- JSON parsing (simple manual parser to avoid extra deps) ---
+    // --- JSON parsing ---
 
     private fun parseJsonResult(json: String): TranscribeResult {
         val segments = mutableListOf<Segment>()
         val fullText = StringBuilder()
 
-        // Expected format: JSON array of [startMs, endMs, "text"]
-        // Simple parser
         var i = 0
         while (i < json.length) {
             if (json[i] == '[') {
                 i++
-                // Parse startMs
                 val (startMs, ni1) = parseLong(json, i); i = ni1
                 i = skipComma(json, i)
-                // Parse endMs
                 val (endMs, ni2) = parseLong(json, i); i = ni2
                 i = skipComma(json, i)
-                // Parse string
                 val (text, ni3) = parseString(json, i); i = ni3
                 i = skipToNext(json, i)
 
@@ -135,7 +133,7 @@ object WhisperBridge {
         var i = start
         while (i < s.length && s[i] != '"') i++
         if (i >= s.length) return "" to i
-        i++ // skip opening quote
+        i++
         val sb = StringBuilder()
         while (i < s.length && s[i] != '"') {
             if (s[i] == '\\' && i + 1 < s.length) {
@@ -151,7 +149,7 @@ object WhisperBridge {
                 i++
             }
         }
-        i++ // skip closing quote
+        i++
         return sb.toString() to i
     }
 
@@ -164,6 +162,6 @@ object WhisperBridge {
     private fun skipToNext(s: String, start: Int): Int {
         var i = start
         while (i < s.length && s[i] != ']') i++
-        return i + 1 // skip ]
+        return i + 1
     }
 }

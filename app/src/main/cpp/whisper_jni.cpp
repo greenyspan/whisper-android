@@ -11,6 +11,11 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
+// Global refs for progress callback
+static JavaVM* g_jvm = nullptr;
+static jobject g_bridge = nullptr;
+static jmethodID g_onProgress = nullptr;
+
 // --- Simple WAV reader (16-bit PCM only) ---
 static bool read_wav_f32(const std::string& path, std::vector<float>& samples) {
     std::ifstream file(path, std::ios::binary);
@@ -19,7 +24,6 @@ static bool read_wav_f32(const std::string& path, std::vector<float>& samples) {
         return false;
     }
 
-    // Read WAV header (44 bytes standard)
     char header[44];
     file.read(header, 44);
     if (!file || file.gcount() < 44) {
@@ -27,7 +31,6 @@ static bool read_wav_f32(const std::string& path, std::vector<float>& samples) {
         return false;
     }
 
-    // Verify RIFF/WAVE
     if (std::string(header, 4) != "RIFF" || std::string(header + 8, 4) != "WAVE") {
         LOGE("Not a valid WAV file");
         return false;
@@ -39,7 +42,6 @@ static bool read_wav_f32(const std::string& path, std::vector<float>& samples) {
         return false;
     }
 
-    // Find data chunk
     file.seekg(36);
     while (file) {
         char chunkId[4];
@@ -69,9 +71,23 @@ static bool read_wav_f32(const std::string& path, std::vector<float>& samples) {
 
 extern "C" {
 
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+    g_jvm = vm;
+    return JNI_VERSION_1_6;
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeInit(
-    JNIEnv* env, jclass, jstring modelPath) {
+    JNIEnv* env, jclass, jstring modelPath, jobject bridgeObj) {
+    
+    // Store global ref to bridge for progress callback
+    if (g_bridge != nullptr) {
+        env->DeleteGlobalRef(g_bridge);
+    }
+    g_bridge = env->NewGlobalRef(bridgeObj);
+    
+    jclass cls = env->GetObjectClass(bridgeObj);
+    g_onProgress = env->GetMethodID(cls, "onProgress", "(I)V");
     
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
     
@@ -91,7 +107,12 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeInit(
 
 JNIEXPORT void JNICALL
 Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeFree(
-    JNIEnv*, jclass, jlong ctxPtr) {
+    JNIEnv* env, jclass, jlong ctxPtr) {
+    
+    if (g_bridge != nullptr) {
+        env->DeleteGlobalRef(g_bridge);
+        g_bridge = nullptr;
+    }
     
     if (ctxPtr != 0) {
         auto* ctx = reinterpret_cast<struct whisper_context*>(ctxPtr);
@@ -116,7 +137,6 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     const char* audio = env->GetStringUTFChars(audioPath, nullptr);
     const char* lang = env->GetStringUTFChars(language, nullptr);
     
-    // Read audio file into PCM float samples
     std::vector<float> pcmf32;
     if (!read_wav_f32(audio, pcmf32)) {
         env->ReleaseStringUTFChars(audioPath, audio);
@@ -125,7 +145,6 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
         return env->NewStringUTF("[]");
     }
     
-    // Full params
     struct whisper_full_params params = whisper_full_default_params(
         WHISPER_SAMPLING_GREEDY);
     
@@ -140,10 +159,31 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     params.max_len = 0;
     params.language = (lang[0] == 'a' && lang[1] == 'u') ? nullptr : lang;
     
+    // Progress callback - calls back to Kotlin
+    params.progress_callback = [](struct whisper_context*, struct whisper_state*, int progress, void*) {
+        if (g_jvm && g_bridge && g_onProgress) {
+            JNIEnv* cbEnv;
+            if (g_jvm->AttachCurrentThread(&cbEnv, nullptr) == JNI_OK) {
+                cbEnv->CallVoidMethod(g_bridge, g_onProgress, progress);
+                g_jvm->DetachCurrentThread();
+            }
+        }
+    };
+    params.progress_callback_user_data = nullptr;
+    
     LOGI("Starting transcription: audio=%s, lang=%s, threads=%d, samples=%zu",
          audio, lang, nThreads, pcmf32.size());
     
     int ret = whisper_full(ctx, params, pcmf32.data(), pcmf32.size());
+    
+    // Signal 100% on completion
+    if (g_jvm && g_bridge && g_onProgress) {
+        JNIEnv* cbEnv;
+        if (g_jvm->AttachCurrentThread(&cbEnv, nullptr) == JNI_OK) {
+            cbEnv->CallVoidMethod(g_bridge, g_onProgress, 100);
+            g_jvm->DetachCurrentThread();
+        }
+    }
     
     env->ReleaseStringUTFChars(audioPath, audio);
     env->ReleaseStringUTFChars(language, lang);
@@ -156,10 +196,8 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     int n_segments = whisper_full_n_segments(ctx);
     LOGI("Transcription complete: %d segments", n_segments);
     
-    // Get t0 for relative timing
     int64_t t0 = whisper_full_get_segment_t0(ctx, 0);
     
-    // Build JSON array
     std::ostringstream json;
     json << "[";
     for (int i = 0; i < n_segments; i++) {

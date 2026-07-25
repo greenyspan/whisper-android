@@ -32,10 +32,18 @@ fun HomeScreen(
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let {
-            viewModel.selectFile(it, it.lastPathSegment ?: "未知文件")
-        }
+        uri?.let { viewModel.selectFile(it, it.lastPathSegment ?: "未知文件") }
     }
+
+    val outputPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(OutputFormat.TXT.mimeType)
+    ) { uri: Uri? ->
+        uri?.let { viewModel.selectOutput(it, it.lastPathSegment ?: "输出文件") }
+    }
+
+    val canStart = uiState.selectedFile != null
+            && uiState.outputUri != null
+            && uiState.state == AppState.IDLE
 
     Scaffold(
         topBar = {
@@ -62,7 +70,20 @@ fun HomeScreen(
                 onSelectFile = { filePickerLauncher.launch(arrayOf("audio/*", "video/*")) },
             )
 
-            // 2. Options
+            // 2. Output location
+            OutputCard(
+                fileName = uiState.outputFileName,
+                onSelect = {
+                    val fmt = uiState.outputFormat
+                    val suffix = when (fmt) {
+                        OutputFormat.SRT -> "transcribe.srt"
+                        else -> "transcribe.txt"
+                    }
+                    outputPickerLauncher.launch(suffix)
+                },
+            )
+
+            // 3. Options
             OptionsCard(
                 selectedModel = uiState.selectedModel,
                 selectedLanguage = uiState.selectedLanguage,
@@ -72,10 +93,10 @@ fun HomeScreen(
                 onFormatChange = viewModel::selectOutputFormat,
             )
 
-            // 3. Start button
+            // 4. Start button
             Button(
                 onClick = viewModel::startTranscribe,
-                enabled = uiState.state == AppState.IDLE && uiState.selectedFile != null,
+                enabled = canStart,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -86,7 +107,7 @@ fun HomeScreen(
                 Text("开始转写", style = MaterialTheme.typography.titleMedium)
             }
 
-            // 4. Progress / Status
+            // 5. Progress
             AnimatedVisibility(
                 visible = uiState.state != AppState.IDLE && uiState.state != AppState.DONE,
                 enter = fadeIn(),
@@ -95,14 +116,12 @@ fun HomeScreen(
                 ProgressCard(uiState)
             }
 
-            // 5. Error
+            // 6. Error
             AnimatedVisibility(visible = uiState.state == AppState.ERROR) {
-                ErrorCard(uiState.errorMessage ?: "未知错误") {
-                    viewModel.reset()
-                }
+                ErrorCard(uiState.errorMessage ?: "未知错误") { viewModel.reset() }
             }
 
-            // 6. Result
+            // 7. Result
             AnimatedVisibility(visible = uiState.state == AppState.DONE) {
                 ResultCard(
                     result = uiState.result,
@@ -118,21 +137,13 @@ fun HomeScreen(
 private fun FileSelectionCard(fileName: String, onSelectFile: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Filled.AudioFile,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
+            Icon(Icons.Filled.AudioFile, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(12.dp))
             Text(
                 text = if (fileName.isEmpty()) "选择音频或视频文件" else fileName,
@@ -142,15 +153,39 @@ private fun FileSelectionCard(fileName: String, onSelectFile: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
                 color = if (fileName.isEmpty())
                     MaterialTheme.colorScheme.onSurfaceVariant
-                else
-                    MaterialTheme.colorScheme.onSurface,
+                else MaterialTheme.colorScheme.onSurface,
             )
             IconButton(onClick = onSelectFile) {
-                Icon(
-                    Icons.Filled.FolderOpen,
-                    contentDescription = "选择文件",
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                Icon(Icons.Filled.FolderOpen, null, tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OutputCard(fileName: String, onSelect: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Save, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = if (fileName.isEmpty()) "选择保存位置" else "保存到: $fileName",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = if (fileName.isEmpty())
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.onSurface,
+            )
+            IconButton(onClick = onSelect) {
+                Icon(Icons.Filled.CreateNewFolder, null, tint = MaterialTheme.colorScheme.primary)
             }
         }
     }
@@ -184,110 +219,59 @@ private fun OptionsCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("转写选项", style = MaterialTheme.typography.titleSmall)
 
-            // Model
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "模型",
-                    modifier = Modifier.width(64.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Text("模型", modifier = Modifier.width(64.dp), style = MaterialTheme.typography.bodyMedium)
                 Box(modifier = Modifier.weight(1f)) {
-                    OutlinedButton(
-                        onClick = { modelExpanded = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
+                    OutlinedButton(onClick = { modelExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(modelDisplay, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Icon(Icons.Filled.ArrowDropDown, null)
                     }
-                    DropdownMenu(
-                        expanded = modelExpanded,
-                        onDismissRequest = { modelExpanded = false },
-                    ) {
+                    DropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
                         Models.all.forEach { model ->
                             DropdownMenuItem(
                                 text = { Text(model.displayName) },
-                                onClick = {
-                                    onModelChange(model.key)
-                                    modelExpanded = false
-                                },
+                                onClick = { onModelChange(model.key); modelExpanded = false },
                             )
                         }
                     }
                 }
             }
 
-            // Language
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "语言",
-                    modifier = Modifier.width(64.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Text("语言", modifier = Modifier.width(64.dp), style = MaterialTheme.typography.bodyMedium)
                 Box(modifier = Modifier.weight(1f)) {
-                    OutlinedButton(
-                        onClick = { langExpanded = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            languages[selectedLanguage] ?: selectedLanguage,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    OutlinedButton(onClick = { langExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(languages[selectedLanguage] ?: selectedLanguage, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Icon(Icons.Filled.ArrowDropDown, null)
                     }
-                    DropdownMenu(
-                        expanded = langExpanded,
-                        onDismissRequest = { langExpanded = false },
-                    ) {
+                    DropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
                         languages.forEach { (key, name) ->
                             DropdownMenuItem(
                                 text = { Text(name) },
-                                onClick = {
-                                    onLanguageChange(key)
-                                    langExpanded = false
-                                },
+                                onClick = { onLanguageChange(key); langExpanded = false },
                             )
                         }
                     }
                 }
             }
 
-            // Output format
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "输出",
-                    modifier = Modifier.width(64.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Text("输出", modifier = Modifier.width(64.dp), style = MaterialTheme.typography.bodyMedium)
                 Box(modifier = Modifier.weight(1f)) {
-                    OutlinedButton(
-                        onClick = { formatExpanded = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
+                    OutlinedButton(onClick = { formatExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(outputFormat.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Icon(Icons.Filled.ArrowDropDown, null)
                     }
-                    DropdownMenu(
-                        expanded = formatExpanded,
-                        onDismissRequest = { formatExpanded = false },
-                    ) {
+                    DropdownMenu(expanded = formatExpanded, onDismissRequest = { formatExpanded = false }) {
                         OutputFormat.entries.forEach { fmt ->
                             DropdownMenuItem(
                                 text = { Text(fmt.label) },
-                                onClick = {
-                                    onFormatChange(fmt)
-                                    formatExpanded = false
-                                },
+                                onClick = { onFormatChange(fmt); formatExpanded = false },
                             )
                         }
                     }
@@ -301,38 +285,22 @@ private fun OptionsCard(
 private fun ProgressCard(uiState: AppUiState) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                uiState.statusMessage,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(uiState.statusMessage, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
 
             when (uiState.state) {
                 AppState.DOWNLOADING_MODEL -> {
-                    LinearProgressIndicator(
-                        progress = { uiState.progress },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        "${(uiState.progress * 100).toInt()}%",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    LinearProgressIndicator(progress = { uiState.progress }, modifier = Modifier.fillMaxWidth())
+                    Text("${(uiState.progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
                 }
                 AppState.DECODING -> {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 AppState.TRANSCRIBING -> {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    LinearProgressIndicator(progress = { uiState.progress }, modifier = Modifier.fillMaxWidth())
+                    Text("${(uiState.progress).toInt()}%", style = MaterialTheme.typography.bodySmall)
                 }
                 else -> {}
             }
@@ -344,31 +312,16 @@ private fun ProgressCard(uiState: AppUiState) {
 private fun ErrorCard(message: String, onRetry: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Error,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                )
+                Icon(Icons.Filled.Error, null, tint = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "转写失败",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                Text("转写失败", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
             }
             Text(message, style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = onRetry) {
-                Text("重新开始")
-            }
+            TextButton(onClick = onRetry) { Text("重新开始") }
         }
     }
 }
@@ -381,59 +334,27 @@ private fun ResultCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "转写完成",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
+                Text("转写完成", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             }
-
             if (result != null) {
+                Text("共 ${result.segments.size} 个片段", style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "共 ${result.segments.size} 个片段",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-
-                // Preview
-                Text(
-                    result.fullText.take(300).let {
-                        if (result.fullText.length > 300) "$it…" else it
-                    },
+                    result.fullText.take(300).let { if (result.fullText.length > 300) "$it…" else it },
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 )
-
-                Text(
-                    "保存位置: $outputPath",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(onClick = onNewTask) {
-                    Text("新转写")
+                outputPath?.let {
+                    Text("保存位置: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onNewTask) { Text("新转写") }
             }
         }
     }
