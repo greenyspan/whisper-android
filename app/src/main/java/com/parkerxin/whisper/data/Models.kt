@@ -57,12 +57,18 @@ object Models {
             ), "WhisperModels"
         )
         dir.mkdirs()
+        // Ensure readable by reinstalled app (different UID)
+        dir.setReadable(true, false)
+        dir.setExecutable(true, false)
         return dir
     }
 
     fun getModelPath(key: String): String {
         val model = all.first { it.key == key }
-        return File(modelsDir(), model.fileName).absolutePath
+        val f = File(modelsDir(), model.fileName)
+        // Make existing file readable by current app
+        f.setReadable(true, false)
+        return f.absolutePath
     }
 
     fun isModelDownloaded(key: String): Boolean {
@@ -122,6 +128,7 @@ object Models {
             }
 
             tmpFile.renameTo(outFile)
+            outFile.setReadable(true, false) // world-readable for reinstall survival
             Result.success(outFile.absolutePath)
         } catch (e: Exception) {
             Result.failure(e)
