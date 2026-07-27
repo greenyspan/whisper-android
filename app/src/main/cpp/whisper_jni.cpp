@@ -159,6 +159,11 @@ Java_com_parkerxin_whisper_whisper_WhisperBridge_nativeTranscribe(
     params.max_len = 0;
     params.language = (lang[0] == 'a' && lang[1] == 'u') ? nullptr : lang;
     
+    // Force simplified Chinese when language is zh
+    if (lang[0] == 'z' && lang[1] == 'h') {
+        params.initial_prompt = "以下是普通话的简体中文转写。使用简体中文。";
+    }
+    
     // Progress callback — uses GetEnv for thread-safety
     params.progress_callback = [](struct whisper_context*, struct whisper_state*, int progress, void*) {
         if (!g_jvm) return;
